@@ -4,7 +4,6 @@ torchvision
 numpy
 pillow
 grad-cam
-opencv-python-headless
 scikit-learn
 pandas
 streamlit
