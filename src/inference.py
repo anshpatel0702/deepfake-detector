@@ -63,6 +63,7 @@ class DeepfakeDetector:
             transforms.ToTensor(),
             transforms.Normalize(MEAN, STD),
         ])
+        self.backend, self.backend_note = "not used yet", ""
         self._mtcnn = None  # created on first use, so skip_detect works without facenet-pytorch
 
     # ------------------------------------------------------------------ helpers
@@ -73,9 +74,9 @@ class DeepfakeDetector:
 
     def _get_mtcnn(self):
         """MTCNN from facenet-pytorch. If the package is missing it is installed once without its
-        old torch pin; if that fails too, returns False and OpenCV's Haar detector is used instead."""
+        old torch pin; if that fails too, returns False and a simpler detector is used instead."""
         if self._mtcnn is None:
-            MTCNN = None
+            MTCNN, notes = None, []
             try:
                 from facenet_pytorch import MTCNN
             except ImportError:
@@ -83,30 +84,50 @@ class DeepfakeDetector:
                         ["uv", "pip", "install", "--python", sys.executable, "--no-deps", "-q", "facenet-pytorch"])
                 for cmd in cmds:
                     try:
-                        subprocess.run(cmd, check=True, timeout=300)
+                        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                        if r.returncode != 0:
+                            notes.append(f"{cmd[0]}: {(r.stderr or r.stdout).strip()[-150:]}")
+                            continue
                         importlib.invalidate_caches()
                         from facenet_pytorch import MTCNN
                         break
-                    except Exception:
+                    except Exception as exc:
                         MTCNN = None
-            self._mtcnn = MTCNN(keep_all=True, device="cpu", post_process=False) if MTCNN else False
+                        notes.append(f"{cmd[0]}: {exc}")
+            if MTCNN:
+                self._mtcnn = MTCNN(keep_all=True, device="cpu", post_process=False)
+                self.backend, self.backend_note = "MTCNN", ""
+            else:
+                self._mtcnn = False
+                self.backend_note = " | ".join(notes)[:400]
         return self._mtcnn
 
-    @staticmethod
-    def _haar_detect(img: Image.Image):
-        """Fallback face detector (OpenCV, frontal faces). Returns (boxes, probs) like MTCNN."""
-        gray = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2GRAY)
-        cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        found = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
-        if len(found) == 0:
-            return None, None
-        boxes = np.array([[x, y, x + w, y + h] for x, y, w, h in found], dtype=float)
-        return boxes, [1.0] * len(boxes)
+    def _fallback_detect(self, img: Image.Image):
+        """No MTCNN: try OpenCV's Haar detector; if that is unusable too, use the centre square of the
+        picture. Returns (boxes, probs) like MTCNN."""
+        try:
+            gray = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2GRAY)
+            cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+            if cascade.empty():
+                raise RuntimeError("cascade file not found")
+            found = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+            self.backend = "OpenCV Haar"
+            if len(found) == 0:
+                return None, None
+            boxes = np.array([[x, y, x + w, y + h] for x, y, w, h in found], dtype=float)
+            return boxes, [1.0] * len(boxes)
+        except Exception as exc:
+            self.backend = "centre crop (no face detector available)"
+            self.backend_note = (self.backend_note + f" | opencv: {exc}")[:500]
+            W, H = img.size
+            s = min(W, H)
+            box = [(W - s) / 2, (H - s) / 2, (W + s) / 2, (H + s) / 2]
+            return np.array([box], dtype=float), [1.0]
 
     def detect_face(self, img: Image.Image, margin: float = 0.3):
         """Return (square face crop, (x1, y1, x2, y2)) for the largest face, or None."""
         mtcnn = self._get_mtcnn()
-        boxes, probs = mtcnn.detect(img) if mtcnn else self._haar_detect(img)
+        boxes, probs = mtcnn.detect(img) if mtcnn else self._fallback_detect(img)
         if boxes is None or len(boxes) == 0:
             return None
         best, best_area = None, 0.0
