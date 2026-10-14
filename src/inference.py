@@ -79,13 +79,16 @@ class DeepfakeDetector:
             try:
                 from facenet_pytorch import MTCNN
             except ImportError:
-                try:
-                    subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "-q", "facenet-pytorch"],
-                                   check=True, timeout=300)
-                    importlib.invalidate_caches()
-                    from facenet_pytorch import MTCNN
-                except Exception:
-                    MTCNN = None
+                cmds = ([sys.executable, "-m", "pip", "install", "--no-deps", "-q", "facenet-pytorch"],
+                        ["uv", "pip", "install", "--python", sys.executable, "--no-deps", "-q", "facenet-pytorch"])
+                for cmd in cmds:
+                    try:
+                        subprocess.run(cmd, check=True, timeout=300)
+                        importlib.invalidate_caches()
+                        from facenet_pytorch import MTCNN
+                        break
+                    except Exception:
+                        MTCNN = None
             self._mtcnn = MTCNN(keep_all=True, device="cpu", post_process=False) if MTCNN else False
         return self._mtcnn
 
