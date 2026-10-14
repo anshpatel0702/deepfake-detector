@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable, Optional, Union
 
@@ -80,14 +82,18 @@ class DeepfakeDetector:
             try:
                 from facenet_pytorch import MTCNN
             except ImportError:
-                cmds = ([sys.executable, "-m", "pip", "install", "--no-deps", "-q", "facenet-pytorch"],
-                        ["uv", "pip", "install", "--python", sys.executable, "--no-deps", "-q", "facenet-pytorch"])
+                # the server's Python environment is read-only, so install into a temp folder and load from there
+                target = os.path.join(tempfile.gettempdir(), "fnet_pkgs")
+                cmds = ([sys.executable, "-m", "pip", "install", "--no-deps", "-q", "--target", target, "facenet-pytorch"],
+                        ["uv", "pip", "install", "--no-deps", "-q", "--target", target, "facenet-pytorch"])
                 for cmd in cmds:
                     try:
                         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                         if r.returncode != 0:
                             notes.append(f"{cmd[0]}: {(r.stderr or r.stdout).strip()[-150:]}")
                             continue
+                        if target not in sys.path:
+                            sys.path.insert(0, target)
                         importlib.invalidate_caches()
                         from facenet_pytorch import MTCNN
                         break
