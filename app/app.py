@@ -70,6 +70,9 @@ uploaded = st.file_uploader("Choose an image or video", type=["jpg", "jpeg", "pn
 
 if uploaded is not None:
     ext = Path(uploaded.name).suffix.lower()
+    if skip_detect:
+        st.warning("Face detection is switched OFF in the sidebar, so the whole picture is sent to the model. "
+                   "Only use this for images that are already tight face crops. Untick it for normal photos.")
     try:
         detector = load_detector()
 
@@ -134,6 +137,14 @@ if uploaded is not None:
             st.error("Unsupported file type. Please upload a JPG, PNG, MP4, AVI or MOV file.")
     except Exception as exc:  # keep the app friendly instead of showing a traceback
         st.error(f"Something went wrong while analysing this file: {exc}")
+
+if uploaded is not None:
+    try:
+        _d = load_detector()
+        if not skip_detect:
+            st.caption(f"Face detector used: {_d.backend}" + (f"  \n(details: {_d.backend_note})" if _d.backend_note else ""))
+    except Exception:
+        pass
 
 st.divider()
 st.caption("Academic prototype. Results are probabilistic and not legal proof. "
