@@ -12,6 +12,9 @@ Quick command-line test (from the project root):
 from __future__ import annotations
 
 import argparse
+import importlib
+import subprocess
+import sys
 from pathlib import Path
 from typing import Callable, Optional, Union
 
@@ -69,14 +72,38 @@ class DeepfakeDetector:
         return ImageOps.exif_transpose(img).convert("RGB")
 
     def _get_mtcnn(self):
+        """MTCNN from facenet-pytorch. If the package is missing it is installed once without its
+        old torch pin; if that fails too, returns False and OpenCV's Haar detector is used instead."""
         if self._mtcnn is None:
-            from facenet_pytorch import MTCNN  # imported lazily
-            self._mtcnn = MTCNN(keep_all=True, device="cpu", post_process=False)
+            MTCNN = None
+            try:
+                from facenet_pytorch import MTCNN
+            except ImportError:
+                try:
+                    subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "-q", "facenet-pytorch"],
+                                   check=True, timeout=300)
+                    importlib.invalidate_caches()
+                    from facenet_pytorch import MTCNN
+                except Exception:
+                    MTCNN = None
+            self._mtcnn = MTCNN(keep_all=True, device="cpu", post_process=False) if MTCNN else False
         return self._mtcnn
+
+    @staticmethod
+    def _haar_detect(img: Image.Image):
+        """Fallback face detector (OpenCV, frontal faces). Returns (boxes, probs) like MTCNN."""
+        gray = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2GRAY)
+        cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        found = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+        if len(found) == 0:
+            return None, None
+        boxes = np.array([[x, y, x + w, y + h] for x, y, w, h in found], dtype=float)
+        return boxes, [1.0] * len(boxes)
 
     def detect_face(self, img: Image.Image, margin: float = 0.3):
         """Return (square face crop, (x1, y1, x2, y2)) for the largest face, or None."""
-        boxes, probs = self._get_mtcnn().detect(img)
+        mtcnn = self._get_mtcnn()
+        boxes, probs = mtcnn.detect(img) if mtcnn else self._haar_detect(img)
         if boxes is None or len(boxes) == 0:
             return None
         best, best_area = None, 0.0
