@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2
+torchvision==0.17.1
+numpy<2
+pillow==10.2.0
+facenet-pytorch==2.6.0
+grad-cam
+opencv-python-headless
+scikit-learn
+pandas
+streamlit
